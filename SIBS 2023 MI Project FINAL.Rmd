@@ -1,0 +1,763 @@
+---
+title: "SIBS 2023 MI Project FINAL"
+author: "Amshula Gajula"
+date: "2023-07-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(mosaic)
+library(ggplot2)
+library(dplyr)
+library(stats)
+library(mice)
+library(scales)
+library(bestglm)
+library(car)
+library(glmnet)
+library(naniar)
+#install.packages("mmpf")
+#install.packages("pROC")
+library(mmpf)
+library(pROC)
+set.seed(1)
+```
+
+```{r}
+#load in data set
+setwd("/Users/amshulagajula/Desktop")
+mi <- read.csv("Myocardial infarction complications Database.csv")
+```
+
+
+```{r}
+set.seed(1)
+#making the variables as factor
+names <- c(3:34,39:83,85,92:124)
+mi4 = mi
+mi.factor <- mutate(mi4,across(names,as.factor))
+
+mi5$X=NULL
+vector = c(3:33,36:75,77,81:113)
+mi5 = mutate(mi5,across(vector,as.factor))
+
+#get rid of KFK blood because it has way too many missings for an imputation to work
+mi.factor$KFK_BLOOD<-NULL
+mi.factor$ALT_BLOOD=NULL
+mi.factor$AST_BLOOD=NULL
+
+#run imputation on factor mi
+imputation <- mice(data=mi.factor, method = "pmm", m=5)
+imputation.mi.factor <- complete(imputation)
+```
+
+```{r}
+#Full model: includes all available covariates
+#convert back to numeric
+set.seed(1)
+name = c(110)
+mi5 <- mutate(imputation.mi.factor,across(name,as.numeric))
+mi5$FIBR_PREDS = ifelse(mi5$FIBR_PREDS==1,0,1)
+
+# Assuming your data set is called 'data'
+
+# Loop through each column and convert to numeric
+for (col in names(imputation.mi.factor)) {
+  imputation.mi.factor[[col]] <- as.numeric(imputation.mi.factor[[col]])
+}
+
+
+mi.vif = imputation.mi.factor
+#remove multicollinearity
+
+mi.vif$ritm_ecg_p_04= NULL
+mi.vif$ritm_ecg_p_01= NULL
+mi.vif$ritm_ecg_p_02= NULL
+mi.vif$ritm_ecg_p_07= NULL
+mi.vif$ritm_ecg_p_08= NULL
+mi5$D_AD_KBRIG = NULL
+mi5$D_AD_ORIT = NULL
+mi5$DLIT_AG = NULL
+
+#without multi-collinearity
+fit2 <- lm(FIBR_PREDS ~ .-ID, data = mi.vif)
+summary(fit2)
+t(t(vif(fit2)))
+```
+
+```{r}
+set.seed(1)
+# - Stepwise Selection 
+# --- Forward Selection
+# - Define starting model as the "null" model with no covariates
+start.mod <- lm(FIBR_PREDS ~ 1 , data = mi5)
+
+# - Define stopping model as the "full" model with all potential covariates
+#   Note: Need to wrap lm() function call in a formula() function call
+stop.mod <- formula(lm(FIBR_PREDS ~ . -ID, data = mi5))
+
+# - Perform forward selection using the step() function
+alpha.crit <- 0.2
+ffit <- step(start.mod,
+             scope=stop.mod,
+             direction="forward",
+             test="F",
+             k=qchisq(1-alpha.crit,1))
+summary(ffit)
+
+0.6 or higher
+# Extract coefficients table from summary
+ffit.summary <- summary(ffit)
+ffit.covar <- as.data.frame(ffit.summary$coefficients[,"Pr(>|t|)"]) #just p vals as DF
+ffit.covar <- ffit.covar %>% filter(!row_number() %in% c(1)) #remove intercept row
+colnames(ffit.covar) <- c("P") #rename col name
+ffit.covar <- ffit.covar %>% filter(P < 0.05)
+
+#create new table for logisitic regression (forward)
+forward.variables = c("n_r_ecg_p_05","AGE","nr_03","PREDS_TAH","LID_KB", "n_r_ecg_p_01",
+"IBS_POST","nr_07", "nr_11","K_BLOOD","zab_leg_03", "R_AB_3_n", "R_AB_3_n", "nr_04",     
+"INF_ANAM","SEX", "S_AD_KBRIG","NA_R_1_n","n_r_ecg_p_08", "K_SH_POST", "GIPO_K",       "NOT_NA_1_n", "ZSN","zab_leg_01","n_r_ecg_p_10", "nr_01", "ANT_CA_S_n", "np_05",        
+"n_p_ecg_p_01", "lat_im","FIBR_PREDS")
+mi5.forward = mi5[,forward.variables]
+
+mi5.forward$n_r_ecg_p_05 = ifelse(mi5.forward$n_r_ecg_p_05==1,1,0)
+mi5.forward$nr_03 = ifelse(mi5.forward$nr_03==1,1,0)
+mi5.forward$PREDS_TAH = ifelse(mi5.forward$PREDS_TAH==1,1,0)
+mi5.forward$n_r_ecg_p_01 = ifelse(mi5.forward$n_r_ecg_p_01==1,1,0)
+mi5.forward$IBS_POST = ifelse(mi5.forward$IBS_POST==1,1,0)
+mi5.forward$nr_07= ifelse(mi5.forward$nr_07==1,1,0)
+mi5.forward$nr_11 = ifelse(mi5.forward$nr_11==1,1,0)
+mi5.forward$zab_leg_03= ifelse(mi5.forward$zab_leg_03==1,1,0)
+mi5.forward$nr_04= ifelse(mi5.forward$nr_04==1,1,0)
+mi5.forward$INF_ANAM= ifelse(mi5.forward$INF_ANAM==1,1,0)
+mi5.forward$NA_R_1_n= ifelse(mi5.forward$NA_R_1_n==3,1,0)
+mi5.forward$n_r_ecg_p_08= ifelse(mi5.forward$n_r_ecg_p_08==1,1,0)
+mi5.forward$K_SH_POST= ifelse(mi5.forward$K_SH_POST==1,1,0)
+mi5.forward$GIPO_K= ifelse(mi5.forward$GIPO_K==1,1,0)
+mi5.forward$NOT_NA_1_n= ifelse(mi5.forward$NOT_NA_1_n==2,1,0)
+mi5.forward$ZSN= ifelse(mi5.forward$ZSN==1,1,0)
+mi5.forward$zab_leg_01= ifelse(mi5.forward$zab_leg_01==1,1,0)
+mi5.forward$n_r_ecg_p_10= ifelse(mi5.forward$n_r_ecg_p_10==1,1,0)
+mi5.forward$nr_01= ifelse(mi5.forward$nr_01==1,1,0)
+mi5.forward$ANT_CA_S_n= ifelse(mi5.forward$ANT_CA_S_n==1,1,0)
+mi5.forward$np_05= ifelse(mi5.forward$np_05==1,1,0)
+mi5.forward$n_p_ecg_p_01= ifelse(mi5.forward$n_p_ecg_p_01==1,1,0)
+mi5.forward$lat_im= ifelse(mi5.forward$lat_im==2,1,0)
+mi5.forward$R_AB_3_n= ifelse(mi5.forward$R_AB_3_n == 1 & mi5.forward$R_AB_3_n == 2,1,0)
+
+#forward logistic regression
+ffit.log <- glm(FIBR_PREDS ~ ., data=mi5.forward, family="binomial")
+summary (ffit.log)
+confint.default(ffit.log)
+
+# Extract coefficients from summary
+ffit.log.s <- summary (ffit.log)
+ffit.log.covar <- as.data.frame(ffit.log.s$coefficients[,"Pr(>|z|)"]) #just p vals as DF
+ffit.log.covar <- ffit.log.covar %>% filter(!row_number() %in% c(1)) #remove intercept row
+colnames(ffit.log.covar) <- c("x") #rename col
+ffit.log.covar <- ffit.log.covar %>% filter(x < 0.05)
+
+for (col in names(mi5.forward)) {
+  mi5.forward[[col]] <- as.numeric(mi5.forward[[col]])
+}
+cor(mi5.forward)
+
+# Reshape the data frame to long format
+df_long <- reshape2::melt(mi5.forward)
+
+# Create the color-coded correlation plot using ggplot2
+ggplot(data = df_long, aes(fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab") +
+  theme_minimal()
+
+install.packages("")
+library(corrplot)
+library(psych)
+
+
+
+lol = c(1:30)
+mi5.corr.plot = lapply(mi5.forward[,1:29],numeric)
+
+# Assuming you have a correlation matrix called 'cor_matrix'
+
+# Install and load the corrplot package
+install.packages("corrplot")
+library(corrplot)
+scaled_matrix <- scale(mi5.forward)
+
+# Create the correlation plot with color-coded cells
+corrplot(mi5.forward, method = "color")
+
+
+#back to factor to do logistic
+mi5.forward$GIPO_K = NULL
+mi5.forward$SEX = NULL
+mi5.forward$R_AB_3_n = NULL
+mi5.final$R_AB_3_n = NULL
+
+lame = c(1,3:9,11:14,16:28)
+mi5.final = mutate(mi5.forward,across(lame,as.factor))
+
+mi5.final$LID_KB= ifelse(mi5.final$LID_KB==2,1,0)
+mi5.final$R_AB_3_n.1= ifelse(mi5.final$R_AB_3_n.1==2,1,0)
+
+#Logistic Regression on final
+ffit.log <- glm(FIBR_PREDS ~ ., data=mi5.final, family="binomial")
+summary (ffit.log)
+confint.default(ffit.log)
+
+ffit.log.s <- summary (ffit.log)
+ffit.log.covar <- as.data.frame(ffit.log.s$coefficients[,"Pr(>|z|)"]) #just p vals as DF
+ffit.log.covar <- ffit.log.covar %>% filter(!row_number() %in% c(1)) #remove intercept row
+colnames(ffit.log.covar) <- c("x") #rename col
+
+
+
+#gipo_k & K_blood = 0.7
+
+# Create dataframe with signif covariates + FIBR_PREDS
+sig.cov = c("n_r_ecg_p_05", "AGE","nr_03","PREDS_TAH","LID_KB","n_r_ecg_p_01","IBS_POST",    "nr_11","K_BLOOD","zab_leg_03","R_AB_3_n","nr_04","INF_ANAM","S_AD_KBRIG","GIPO_K","ZSN","zab_leg_01","n_r_ecg_p_10","lat_im","FIBR_PREDS")
+mi5.forward.sig = mi5[,sig.cov]
+
+# To get estimates on odds scale, must exponentiate
+exp(ffit.log$coef)
+exp(confint.default(ffit.log))
+
+#not taking away degrees of freedom from population#
+
+# Get predicted probabilities of AF
+ffit.p_hats <- predict(ffit.log,type='response')
+
+# Check computation of p.hats for first observation 
+head(mi5.final)
+
+# Add predicted probabilities to data set
+mi5.final$p_hats <- ffit.p_hats
+
+# Estimate calibration-in-the-large 
+mean(mi5.final$p_hats)        # Mean P(Y=1|X)
+mean(mi5.final$FIBR_PREDS)    # Observed P(Y=1)
+
+#------Calibration Plot-----
+# Summarize predicted probabilities
+summary(mi5.final$p_hats)
+hist(mi5.final$p_hats)
+
+# Compute deciles of predicted probabilities
+dec <- quantile(mi5.final$p_hats,            # Variable to be summarized
+                probs=seq(0,1,by=0.1), # Vector of percentile values 
+                type=3)                # Use same algorithm as SAS
+dec 
+
+# Create decile group variable 
+mi5.final$dec_grp <- cut(mi5.final$p_hats,         # Predicted probabilities (var to group)
+                   breaks = dec,       # Cut points (group intervals)
+                   include.lowest = T, # Include smallest value 
+                   labels = 1:10)      # Labels for groups
+
+# Check that decile groups created correctly 
+table(mi5.final$dec_grp)                     # Number of observations in each decile group
+prop.table(table(mi5.final$dec_grp))         # Proportion of observations in each decile group
+
+# Compute mean predicted probability and event rate by decile group
+agg <- aggregate(cbind(FIBR_PREDS,p_hats) ~ dec_grp, # Aggregate A,B by C
+                 data = mi5.final,                  # From data set
+                 FUN = 'mean')                # Using this summary function 
+agg
+
+# Check computations for decile group 5
+mean(mi5.final$FIBR_PREDS[mi5.final$dec_grp == 5])
+mean(mi5.final$p_hats[mi5.final$dec_grp == 5])
+
+# Create calibration plot 
+plot(agg$p_hats,                         # x-coor = mean pred prob in dec group
+     agg$FIBR_PREDS,                     # y-coor = obs event rate in dec group
+     main = 'Forward Model Calibration Plot',          # Add main title 
+     ylab = 'Observed A-Fib Rate',       # Add y-axis label
+     xlab = 'Predicted Probabilities',   # Add x-axis label
+     pch = 19,                           # Plotting character = solid dot
+     col = 'palevioletred1',             # Color of plotting character 
+     cex = 1)                            # Size of plotting character (base = 1)
+
+# Add identity line
+abline(a = 0,                            # a = intercept 
+       b = 1)                            # b = slope
+
+# Add fitted regression line
+ffit.cal <- lm(FIBR_PREDS ~ p_hats, data = agg) # Fit linear model to plot data 
+abline(ffit.cal,                        # Using intercept and slope from linear model fit
+       lty = 2,                         # Dashed line
+       col = 'palevioletred4',          # Color of plotting line
+       lwd = 3)                         # Thickness of plotting line (base = 1)
+
+summary(ffit.cal)                        # Compute calibration intercept and slope
+confint(ffit.cal)                        # Compute  95% confidence intervals
+
+#-----Pred probs curves-----
+# Plot density of predicted probabilities by event status
+ggplot(mi5.final,                           # Data set to pull variables from 
+       aes(p_hats,                    # Variable density to plot 
+           fill=as.factor(FIBR_PREDS))) +    # Variable to stratify by (has to be a factor)
+  geom_density(alpha = 0.2) +           # Transparency of plotting colors 
+  scale_fill_manual(                    # Set plotting colors
+    values=c("hotpink", "mediumpurple2"))
+
+#----------C-index----------
+f.set1 <- mi5.final[mi5.final$FIBR_PREDS == 1, 20:21]            # Subset of subjects with events
+f.set0 <- mi5.final[mi5.final$FIBR_PREDS == 0, 20:21]            # Subset of subject without events
+
+f.cart.prod <- cartesianExpand(f.set1,f.set0)   # Create all pairs of pred probs
+head(f.cart.prod)                           # What variables are present? 
+dim(f.cart.prod)                            # Number of pairs
+f.n.pairs <- dim(f.set1)[1] * dim(f.set0)[1]    # Double check ... 
+
+f.c.pairs <- sum(f.cart.prod$p_hats.x > f.cart.prod$p_hats.y)
+
+f.d.pairs <- sum(f.cart.prod$p_hats.x < f.cart.prod$p_hats.y)
+
+f.t.pairs <- sum(f.cart.prod$p_hats.x == f.cart.prod$p_hats.y)
+
+f.c.index <- (f.c.pairs + 0.5*f.t.pairs) / f.n.pairs
+f.c.index                                   # Compute c-index 
+
+#---------ROC curve---------
+froc <- roc(mi5.final$FIBR_PRED,       # Observed outcome variable (Y) 
+               mi5.final$p_hats)    # Predicted probabilities (P.hat(Y=1|X))
+plot.roc(froc)             # Plot ROC curve
+auc(froc)                  # Compute AUC
+ci.auc(froc)               # Compute 95% confidence interval for AUC
+
+#confusion matrix
+confusionmatrix = xtabs(~I(predict(ffit.log, type = "response") > 0.1) + mi5$FIBR_PREDS)
+t(confusionmatrix)
+corPlot(mi5.forward, cex = 1)
+```
+
+```{r}
+# --- Backward Selection
+# - Define starting model as the "full" model with all covariates
+start.mods <- lm(FIBR_PREDS ~ . -ID, data = mi5)
+
+# - Perform backward selection using the step() function
+alpha.crit <- 0.2
+bfit <- step(start.mods,
+             direction="backward",
+             test="F",
+             k=qchisq(1-alpha.crit,1))
+summary(bfit)
+#30 backward
+
+### LASSO REGRESSION
+#define response variable
+y <- mi5$FIBR_PREDS
+
+#define matrix of predictor variables
+x <- data.matrix(mi5[, c(1:101,103:113)])
+
+#perform k-fold cross-validation to find optimal lambda value
+cv_model <- cv.glmnet(x, y, alpha = 1)
+
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.min
+best_lambda
+
+#produce plot of test MSE by lambda value
+plot(cv_model)
+
+#find coefficients of best model
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+coef(best_model)
+
+#use fitted best model to make predictions
+y_predicted <- predict(best_model, s = best_lambda, newx = x)
+
+#find SST and SSE
+sst <- sum((y - mean(y))^2)
+sse <- sum((y_predicted - y)^2)
+
+#find R-Squared
+rsq <- 1 - sse/sst
+rsq
+
+## BEST SUBSET
+mi5.bglm <- mi5[,c(1:113)]
+mi5.bglm %>% relocate(FIBR_PREDS, .after=LET_IS)
+names(mi5.bglm)[113] <- "y"
+head(mi5.bglm)
+
+# --- Best subset selection using AIC
+bsub.aic.fit <- bestglm(mi5.bglm,IC = "AIC",family=gaussian)
+summary(bsub.aic.fit$BestModel)
+
+# - Penalized regression 
+
+# - Create data objects for glmnet() and cv.glment functions: 
+#   data objects with covariates (xx) and outcome (yy) need to be separate; 
+#   outcome saved in a vector object;
+#   covariates saved in a matrix object (not a data frame!) and only include 
+#   covariates to be considered in selection
+yy <- mi5[,"FIBR_PREDS"]
+xx <- as.matrix(mi5[,c(2:101,103:113)])
+
+# --- LASSO regression
+# - Use glmnet() function to get solutions path plot; 
+#   because glmnet() fits both LASSO and Ridge regression, use alpha 
+#   argument to specify which penalty to use (alpha = 1 --> LASSO)
+fit.lasso <- glmnet(xx, yy, alpha=1, standardize=TRUE)
+plot(fit.lasso, label=TRUE, xvar="lambda")
+cbind(1:13,colnames(xx))
+
+# - Use cv.glment() function to perform k-fold cross validation
+#   to select the final model; need to set the seed so random 
+#   can be reproduced each time code is run
+set.seed(1)
+cv.lasso <- cv.glmnet(xx, yy, alpha=1, standardize=TRUE, nfolds=5)
+plot(cv.lasso)
+
+# - Value of lamda that minimizes MSPE: 
+cv.lasso$lambda.min; log(cv.lasso$lambda.min)
+
+# - Regression coefficients for selected model
+lasso.coef <- coef(cv.lasso, s=cv.lasso$lambda.min)
+lasso.coef
+as.vector(lasso.coef)
+
+# - Compare to standard regression fit for selected covariates;
+#   not the same! Penalized regression shrink the betas! 
+fit8 <- lm(Bodyfat ~ Age + Height + Neck + Abdo + Hip + 
+             Knee + Ankle + Fore + Wrist, data = bodyfat)
+summary(fit8)
+```
+
+```{r}
+# Extract coefficients table from summary
+ffit.summary <- summary(ffit)
+ffit.c <- as.data.frame(ffit.summary$coefficients[,"Pr(>|t|)"])
+ffit.covar <- ffit.c %>% filter(!row_number() %in% c(1))   # remove intercept row
+colnames(ffit.covar) <- c("P-value")   # rename col name
+
+# Extract coefficients table from summary
+bfit.summary <- summary(bfit)
+bfit.c <- as.data.frame(ffit.summary$coefficients[,"Pr(>|t|)"])
+bfit.covar <-bfit.c %>% filter(!row_number() %in% c(1))   # remove intercept row
+colnames(bfit.covar) <- c("P-value")   # rename col name
+#---------------------------
+#--Evaluating Forward Model-
+#---------------------------
+
+#-----Calib in the Large----
+# Create dataframe with signif covariates + FIBR_PREDS
+ffit.2.names <- row.names(ffit.2.covar)
+mi.ffit <- mi5[, ffit.2.names]
+mi.ffit <- cbind(mi.ffit, mi5$FIBR_PREDS)
+colnames(mi.ffit)[41] ="FIBR_PREDS"
+mi.ffit$FIBR_PREDS <- mi.ffit$FIBR_PREDS -1 #RUN ONCE
+
+# Logistic regression
+mi.ffit.model <- glm(FIBR_PREDS ~ . , data=mi.ffit, family="binomial")
+summary (mi.ffit.model)
+confint.default(mi.ffit.model)
+
+# To get estimates on odds scale, must exponentiate
+exp(mi.ffit.model$coef)
+exp(confint.default(mi.ffit.model))
+
+# Get predicted probabilities of AF
+ffit.p_hats <- predict(mi.ffit.model,type='response')
+
+# Check computation of p.hats for first observation 
+head(mi.ffit)
+
+# Add predicted probabilities to data set
+mi.ffit$p_hats <- ffit.p_hats
+
+# Estimate calibration-in-the-large 
+mean(mi.ffit$p_hats)        # Mean P(Y=1|X)
+mean(mi.ffit$FIBR_PREDS)    # Observed P(Y=1)
+
+#------Calibration Plot-----
+# Summarize predicted probabilities
+summary(mi.ffit$p_hats)
+hist(mi.ffit$p_hats)
+
+# Compute deciles of predicted probabilities
+dec <- quantile(mi.ffit$p_hats,            # Variable to be summarized
+                probs=seq(0,1,by=0.1), # Vector of percentile values 
+                type=3)                # Use same algorithm as SAS
+dec 
+
+# Create decile group variable 
+mi.ffit$dec_grp <- cut(mi.ffit$p_hats,         # Predicted probabilities (var to group)
+                   breaks = dec,       # Cut points (group intervals)
+                   include.lowest = T, # Include smallest value 
+                   labels = 1:10)      # Labels for groups
+
+# Check that decile groups created correctly 
+table(mi.ffit$dec_grp)                     # Number of observations in each decile group
+prop.table(table(mi.ffit$dec_grp))         # Proportion of observations in each decile group
+
+# Compute mean predicted probability and event rate by decile group
+agg <- aggregate(cbind(FIBR_PREDS,p_hats) ~ dec_grp, # Aggregate A,B by C
+                 data = mi.ffit,                  # From data set
+                 FUN = 'mean')                # Using this summary function 
+agg
+
+# Check computations for decile group 5
+mean(mi.ffit$FIBR_PREDS[mi.ffit$dec_grp == 5])
+mean(mi.ffit$p_hats[mi.ffit$dec_grp == 5])
+
+# Create calibration plot 
+plot(agg$p_hats,                         # x-coor = mean pred prob in dec group
+     agg$FIBR_PREDS,                     # y-coor = obs event rate in dec group
+     main = 'Forward Model Calibration Plot',          # Add main title 
+     ylab = 'Observed A-Fib Rate',       # Add y-axis label
+     xlab = 'Predicted Probabilities',   # Add x-axis label
+     pch = 19,                           # Plotting character = solid dot
+     col = 'palevioletred1',             # Color of plotting character 
+     cex = 1)                            # Size of plotting character (base = 1)
+
+# Add identity line
+abline(a = 0,                            # a = intercept 
+       b = 1)                            # b = slope
+
+# Add fitted regression line
+ffit.cal <- lm(FIBR_PREDS ~ p_hats, data = agg) # Fit linear model to plot data 
+abline(ffit.cal,                        # Using intercept and slope from linear model fit
+       lty = 2,                         # Dashed line
+       col = 'palevioletred4',          # Color of plotting line
+       lwd = 3)                         # Thickness of plotting line (base = 1)
+
+summary(ffit.cal)                        # Compute calibration intercept and slope
+confint(ffit.cal)                        # Compute  95% confidence intervals
+
+#-----Pred probs curves-----
+# Plot density of predicted probabilities by event status
+ggplot(mi.ffit,                           # Data set to pull variables from 
+       aes(p_hats,                    # Variable density to plot 
+           fill=as.factor(FIBR_PREDS))) +    # Variable to stratify by (has to be a factor)
+  geom_density(alpha = 0.2) +           # Transparency of plotting colors 
+  scale_fill_manual(                    # Set plotting colors
+    values=c("hotpink", "mediumpurple2"))
+
+#----------C-index----------
+f.set1 <- mi.ffit[mi.ffit$FIBR_PREDS == 1, 41:42]            # Subset of subjects with events
+f.set0 <- mi.ffit[mi.ffit$FIBR_PREDS == 0, 41:42]            # Subset of subject without events
+
+f.cart.prod <- cartesianExpand(f.set1,f.set0)   # Create all pairs of pred probs
+head(f.cart.prod)                           # What variables are present? 
+dim(f.cart.prod)                            # Number of pairs
+f.n.pairs <- dim(f.set1)[1] * dim(f.set0)[1]    # Double check ... 
+
+f.c.pairs <- sum(f.cart.prod$p_hats.x > f.cart.prod$p_hats.y)
+
+f.d.pairs <- sum(f.cart.prod$p_hats.x < f.cart.prod$p_hats.y)
+
+f.t.pairs <- sum(f.cart.prod$p_hats.x == f.cart.prod$p_hats.y)
+
+f.c.index <- (f.c.pairs + 0.5*f.t.pairs) / f.n.pairs
+f.c.index                                   # Compute c-index 
+
+#---------ROC curve---------
+froc <- roc(mi.ffit$FIBR_PRED,       # Observed outcome variable (Y) 
+               mi.ffit$p_hats)    # Predicted probabilities (P.hat(Y=1|X))
+plot.roc(froc)             # Plot ROC curve
+auc(froc)                  # Compute AUC
+ci.auc(froc)               # Compute 95% confidence interval for AUC
+
+#---------------------------
+#-Evaluating Backward Model-
+#---------------------------
+
+#-----Calib in the Large----
+# Create dataframe with signif covariates + FIBR_PREDS
+bfit.2.names <- row.names(bfit.2.covar)
+mi.bfit <- mi5[, bfit.2.names]
+mi.bfit <- cbind(mi.bfit, mi5$FIBR_PREDS)
+colnames(mi.bfit)[44] ="FIBR_PREDS"
+mi.bfit$FIBR_PREDS <- mi.bfit$FIBR_PREDS -1 #RUN ONCE
+
+# Logistic regression
+mi.bfit.model <- glm(FIBR_PREDS ~ . , data=mi.bfit, family="binomial")
+summary (mi.bfit.model)
+confint.default(mi.bfit.model)
+
+# To get estimates on odds scale, must exponentiate
+exp(mi.bfit.model$coef)
+exp(confint.default(mi.bfit.model))
+
+# Get predicted probabilities of AF
+bfit.p_hats <- predict(mi.bfit.model,type='response')
+
+# Check computation of p.hats for first observation 
+head(mi.bfit)
+
+# Add predicted probabilities to data set
+mi.bfit$p_hats <- bfit.p_hats
+
+# Estimate calibration-in-the-large 
+mean(mi.bfit$p_hats)        # Mean P(Y=1|X)
+mean(mi.bfit$FIBR_PREDS)    # Observed P(Y=1)
+
+#------Calibration Plot-----
+# Summarize predicted probabilities
+summary(mi.bfit$p_hats)
+hist(mi.bfit$p_hats)
+
+# Compute deciles of predicted probabilities
+dec <- quantile(mi.bfit$p_hats,            # Variable to be summarized
+                probs=seq(0,1,by=0.1), # Vector of percentile values 
+                type=3)                # Use same algorithm as SAS
+dec 
+
+# Create decile group variable 
+mi.bfit$dec_grp <- cut(mi.bfit$p_hats,         # Predicted probabilities (var to group)
+                       breaks = dec,       # Cut points (group intervals)
+                       include.lowest = T, # Include smallest value 
+                       labels = 1:10)      # Labels for groups
+
+# Check that decile groups created correctly 
+table(mi.bfit$dec_grp)                     # Number of observations in each decile group
+prop.table(table(mi.bfit$dec_grp))         # Proportion of observations in each decile group
+
+# Compute mean predicted probability and event rate by decile group
+agg <- aggregate(cbind(FIBR_PREDS,p_hats) ~ dec_grp, # Aggregate A,B by C
+                 data = mi.bfit,                  # From data set
+                 FUN = 'mean')                # Using this summary function 
+agg
+
+# Check computations for decile group 5
+mean(mi.bfit$FIBR_PREDS[mi.bfit$dec_grp == 5])
+mean(mi.bfit$p_hats[mi.bfit$dec_grp == 5])
+
+# Create calibration plot 
+plot(agg$p_hats,                         # x-coor = mean pred prob in dec group
+     agg$FIBR_PREDS,                     # y-coor = obs event rate in dec group
+     main = 'Backward Model Calibration Plot',          # Add main title 
+     ylab = 'Observed A-Fib Rate',       # Add y-axis label
+     xlab = 'Predicted Probabilities',   # Add x-axis label
+     pch = 19,                           # Plotting character = solid dot
+     col = 'cornflowerblue',             # Color of plotting character 
+     cex = 1)                            # Size of plotting character (base = 1)
+
+# Add identity line
+abline(a = 0,                            # a = intercept 
+       b = 1)                            # b = slope
+
+# Add fitted regression line
+bfit.cal <- lm(FIBR_PREDS ~ p_hats, data = agg) # Fit linear model to plot data 
+abline(bfit.cal,                        # Using intercept and slope from linear model fit
+       lty = 2,                         # Dashed line
+       col = 'darkblue',          # Color of plotting line
+       lwd = 3)                         # Thickness of plotting line (base = 1)
+
+summary(bfit.cal)                        # Compute calibration intercept and slope
+confint(bfit.cal)                        # Compute  95% confidence intervals
+
+#-----Pred probs curves-----
+# Plot density of predicted probabilities by event status
+ggplot(mi.bfit,                           # Data set to pull variables from 
+       aes(p_hats,                    # Variable density to plot 
+           fill=as.factor(FIBR_PREDS))) +    # Variable to stratify by (has to be a factor)
+  geom_density(alpha = 0.3) +           # Transparency of plotting colors 
+  scale_fill_manual(                    # Set plotting colors
+    values=c("dodgerblue", "turquoise3"))
+
+#----------C-index----------
+b.set1 <- mi.bfit[mi.bfit$FIBR_PREDS == 1, 44:45]            # Subset of subjects with events
+b.set0 <- mi.bfit[mi.bfit$FIBR_PREDS == 0, 44:45]            # Subset of subject without events
+
+b.cart.prod <- cartesianExpand(b.set1,b.set0)   # Create all pairs of pred probs
+head(b.cart.prod)                           # What variables are present? 
+dim(b.cart.prod)                            # Number of pairs
+b.n.pairs <- dim(b.set1)[1] * dim(b.set0)[1]    # Double check ... 
+
+b.c.pairs <- sum(b.cart.prod$p_hats.x > b.cart.prod$p_hats.y)
+
+b.d.pairs <- sum(b.cart.prod$p_hats.x < b.cart.prod$p_hats.y)
+
+b.t.pairs <- sum(b.cart.prod$p_hats.x == b.cart.prod$p_hats.y)
+
+b.c.index <- (b.c.pairs + 0.5*b.t.pairs) / b.n.pairs
+b.c.index                                   # Compute c-index 
+
+#---------ROC curve---------
+broc <- roc(mi.bfit$FIBR_PRED,       # Observed outcome variable (Y) 
+            mi.bfit$p_hats)    # Predicted probabilities (P.hat(Y=1|X))
+plot.roc(broc)             # Plot ROC curve
+auc(broc)                  # Compute AUC
+ci.auc(broc)               # Compute 95% confidence interval for AUC
+
+#---------------------------
+#------------END------------
+#---------------------------
+
+```
+
+```{r}
+## DESCRIPTIVE STATS
+mi.plot = mi5
+mi.plot$SEX = ifelse(mi$SEX== 0,"Female","Male")
+age_intervals <- c(21, 30, 40, 50, 60, 70, 80, 90, 100)
+age_labels <- c("21-30", "31-40", "41-50", "51-60", "61-70", "71-80", "81-90", "91-100")
+
+tibble(count(mi.plot$SEX))
+
+# Convert Age variable to categorical with custom intervals and labels
+mi.plot <- mi.plot %>%
+  mutate(Age_Category = cut(AGE, breaks = age_intervals, labels = age_labels, include.lowest = TRUE))
+
+p = ggplot(mi.plot, aes(x=AGE, fill=SEX, color=SEX)) +
+  geom_histogram(binwidth=1,position="identity",alpha=0.7)
+p+scale_color_manual(values=c("#ffb6c1", "#89CFF0", "#D3D3D3"))+
+  scale_fill_manual(values=c("#ffb6c1", "#89CFF0", "#D3D3D3"))
+
+# Create a bar plot with custom colors for each sex
+custom_colors <- c("#ffb6c1", "#89CFF0")  # Replace with your desired colors
+ggplot(mi.plot, aes(x = Age_Category, fill = SEX)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = custom_colors) +  # Use custom colors
+  labs(x = "Age Group", y = "Count") +
+  ggtitle("Age Group Counts by Sex")
+
+#plot missingness
+vis_miss(mi)
+missing_summary <- data.frame(
+  Variable = colnames(mi),
+  Missing_Count = colSums(is.na(mi)),
+  Missing_Percentage = colSums(is.na(mi)) / nrow(mi) * 100
+)
+missing_summary <- missing_summary %>%
+  arrange(desc(Missing_Count))
+# Print missing value summary table
+print(missing_summary)
+
+sum(is.na(mi))
+(sum(is.na(mi))/prod(dim(mi)))*100
+
+
+missing_perc <- mi %>%
+  summarise_all(~mean(is.na(.))) %>%
+  gather() %>%
+  mutate(Variable = factor(Variable, levels = colnames(mi)))
+
+# Create bar plot
+ggplot(missing_perc, aes(x = Variable, y = value, fill = Variable)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Variable", y = "Missing Percentage") +
+  ggtitle("Missing Data Proportion")
+
+mi.plot$FIBR_PREDS = ifelse(mi$FIBR_PREDS== 0,0,1)
+ggplot(mi.plot, aes(x = FIBR_PREDS)) +
+  geom_bar() +
+  labs(x = "Atrial Fibrillation", y = "Count") +
+  ggtitle("Amount of People who Experienced Atrial Fibrillation Complication post MI")
+
+write.csv(mi5, "/Users/amshulagajula/Downloads\\mi5.csv")
+
+```
+
